@@ -1,7 +1,7 @@
-import org.apache.spark.sql.{DataFrame,SparkSession}
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.types.{StructType, StructField, StringType, LongType}
+import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType, DoubleType}
 
 case object Retraitements {
 
@@ -35,25 +35,65 @@ case object Retraitements {
     df.columns.foldLeft(df)((tempDF, colName) => tempDF.withColumnRenamed(colName, s"$prefix$colName"))
   }
 
+  // Fonction pour corriger les données avec le flag 's' en utilisant la moyenne de la colonne dans la table weather
+  def correctDataWithFlagSUsingMean(df: DataFrame): DataFrame = {
+
+    // Liste des colonnes se terminant par 'Flag'
+    val flagColumns = df.columns.filter(_.endsWith("Flag"))
+
+    // Iteration sur les colonnes pour remplacer les valeurs 's' par la moyenne de la colonne principale
+    var correctedDf = df
+    for (colName <- flagColumns) {
+      val mainCol = colName.stripSuffix("Flag")
+
+      // Calcule de la moyenne de la colonne principale
+      val colMean = correctedDf.select(mean(col(mainCol))).first().getDouble(0)
+
+      // Remplacement des valeurs 's' par la moyenne
+      correctedDf = correctedDf.withColumn(mainCol, when(col(colName) === "s", lit(colMean)).otherwise(col(mainCol)))}
+
+    correctedDf
+  }
+
   // Fonction pour créer la table FT
   def createFlightTable(df: DataFrame): DataFrame = {
 
-    // FAIRE AUSSI LES RETRAITEMENTS , CORRECTION DES VALEURS MANQUANTES ETC ==> IL NE SEMBLE PAS Y EN AVOIR SUR LES DONNEES SAMPLE, A CONFIRMER AVEC TOUTES LES DONNEES
+    // Gestion des valeurs manquantes
+    var cleanedDF = df
+      .withColumn("CRS_DEP_TIME", lpad(col("CRS_DEP_TIME").cast(IntegerType).cast(StringType), 4, "0")) // Remplir avec 0 à gauche pour gérer les heures de type 1 ou 2 digits
+      .withColumn("CRS_DEP_TIME", expr("substring(CRS_DEP_TIME, 1, 2) || ':' || substring(CRS_DEP_TIME, 3, 2)"))
+      .withColumn("FL_DATE", to_date(col("FL_DATE"), "yyyy-MM-dd"))
+      .withColumn("ARR_DELAY_NEW", col("ARR_DELAY_NEW").cast(DoubleType))
+      .withColumn("CANCELLED", col("CANCELLED").cast(IntegerType))
+      .withColumn("DIVERTED", col("DIVERTED").cast(IntegerType))
+      .withColumn("CRS_ELAPSED_TIME", col("CRS_ELAPSED_TIME").cast(DoubleType))
+      .withColumn("WEATHER_DELAY", col("WEATHER_DELAY").cast(DoubleType))
+      .withColumn("NAS_DELAY", col("NAS_DELAY").cast(DoubleType))
 
-    val cleanedDF = df
+    cleanedDF = cleanedDF
       .drop("Unnamed: 12") // Suppression de la colonne inutile
-      .na.replace("CANCELLED", Map("0.0" -> "0")) // Ajustement des données de la colonne CANCELLED (VERIFIER SI ON EST PAS SUR DES INT PLUTOT ==> LIEN SCHEMA)
-      .na.replace("DIVERTED", Map("0.0" -> "0")) // Ajustement des données de la colonne DIVERTED (VERIFIER SI ON EST PAS SUR DES INT PLUTOT ==> LIEN SCHEMA)
+      .na.fill(0, Seq("ARR_DELAY_NEW", "WEATHER_DELAY", "NAS_DELAY"))
+      .na.fill("", Seq("CRS_DEP_TIME", "FL_DATE"))
+
+    cleanedDF = cleanedDF
+      .withColumn("TIMESTAMP", to_timestamp(concat(col("FL_DATE"), lit(" "), col("CRS_DEP_TIME")), "yyyy-MM-dd HH:mm"))
+
+    // Filtrage des vols détournés et annulés
+    val filterDF = cleanedDF
       .where(col("DIVERTED") =!= 1 && col("CANCELLED") =!= 1) // On enlève les vols détournés et annulés
-      .withColumn("ARR_DELAY_NEW", when(col("ARR_DELAY_NEW").isNull, 0).otherwise(col("ARR_DELAY_NEW"))) // Remplacer les valeurs nulles par 0
-      .withColumn("CRS_DEP_TIME", lpad(col("CRS_DEP_TIME"), 4, "0")) // Ajout de 0 pour les heures de moins de 4 chiffres
-      .withColumn("FLIGHT_TIMESTAMP", to_timestamp(concat(col("FL_DATE"), lit(" "), col("CRS_DEP_TIME")), "yyyy-MM-dd HHmm"))
-    //.withColumn("CRS_DEP_TIME", regexp_replace(col("CRS_DEP_TIME"), ".", "")) // Supprimer les points dans la colonne CRS_DEP_TIME
+    // EST CE QU'ON GARDE CES DEUX COLONNES SACHANT Q'IU ELLES SONT EGALES A 0
 
     // Ajout d'un prefixe sur chaque colonne
-    val newdf = addPrefixToColumns(cleanedDF, "FT_")
+    val newDF = addPrefixToColumns(filterDF, "FT_")
 
-    newdf
+    newDF
+      .coalesce(1) // Pour ne générer qu'un seul fichier CSV
+      .write
+      .option("header", "true")
+      .mode("overwrite")
+      .csv("/Users/benjamin/Documents/GitHub/Flight/csvFiles/Flight") // Spécifier le chemin de sortie
+
+    newDF
   }
 
   // Fonction pour créer la table OT
@@ -71,6 +111,9 @@ case object Retraitements {
 
     // Ajout d'un prefixe sur chaque colonne
     newdf = addPrefixToColumns(newdf, "OT_")
+
+    // Nettoyage des données flaggées avec 's' en utilisant la moyenne de la colonne principale
+    newdf = correctDataWithFlagSUsingMean(newdf)
 
     newdf
   }

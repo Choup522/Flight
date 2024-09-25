@@ -42,7 +42,7 @@ object Statistiques {
 
   }
 
-  def countDelayedFlight(flight: DataFrame, onTimeParam: Int): DataFrame = {
+  def countDelayedFlight(flight: DataFrame): DataFrame = {
 
     val delayedData = flight
       .where(col("ARR_DELAY_NEW") =!= 0)
@@ -59,6 +59,24 @@ object Statistiques {
       .drop("WEATHER_DELAY", "NAS_DELAY","TOTAL", "ARR_DELAY_NEW", "OTHER_DELAY")
 
     delayedData
+  }
+
+  def countFlagsWithSAndExport(df: DataFrame): DataFrame = {
+
+    // Liste des colonnes se terminant par 'Flag'
+    val flagColumns = df.columns.filter(_.endsWith("Flag"))
+
+    // Compteur des occurences dans chaque colonne
+    val flagCounts = flagColumns.map { colName =>
+      val count = df.filter(col(colName) === "s").count()
+      (colName, count)
+    }
+
+    // Conversion en dataframe
+    val countDf = df.sparkSession.createDataFrame(flagCounts).toDF("FlagColumn", "Count")
+
+    countDf
+
   }
 
 }
