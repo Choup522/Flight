@@ -5,6 +5,7 @@ import java.util.Date
 
 object Statistiques {
 
+  // Function to count the number of flights per year
   def countAirport(flight: DataFrame): DataFrame = {
     val desc = flight
       .groupBy("ORIGIN_AIRPORT_ID")
@@ -42,6 +43,7 @@ object Statistiques {
 
   }
 
+  // Function to count the number of flights per year
   def countDelayedFlight(flight: DataFrame): DataFrame = {
 
     val delayedData = flight
