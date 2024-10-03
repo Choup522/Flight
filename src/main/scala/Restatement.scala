@@ -7,7 +7,7 @@ import Library._
 case object Restatement {
 
   // Function to create FT Table
-  def createFlightTable(df: DataFrame): DataFrame = {
+  def createFlightTable(df: DataFrame, wban_df: DataFrame): DataFrame = {
 
     // Handling missing values
     var cleanedDF = df
@@ -34,14 +34,33 @@ case object Restatement {
       .where(col("DIVERTED") =!= 1 && col("CANCELLED") =!= 1)
       .drop("DIVERTED", "CANCELLED")
 
-    // Add a prefix to each column
-    val newDF = addPrefixToColumns(filterDF, "FT_")
+    // Integration of timezone calculations
+    // Origin Time Zone
+    var newDF = filterDF
+      .join(wban_df, filterDF("ORIGIN_AIRPORT_ID") === wban_df("AirportID"), "inner")
+      .select(wban_df("TimeZone"), filterDF("*"))
+      .withColumnRenamed("TimeZone", "ORIGIN_TIME_ZONE")
 
-    newDF
+    // Destination Time Zone
+    newDF = newDF
+      .join(wban_df, filterDF("DEST_AIRPORT_ID") === wban_df("AirportID"), "inner")
+      .withColumnRenamed("TimeZone", "DEST_TIME_ZONE")
+
+    // Compute Delta Lag
+    newDF = newDF
+      .withColumn("Delta_Lag", col("DEST_TIME_ZONE").cast(IntegerType) - col("ORIGIN_TIME_ZONE").cast(IntegerType))
+
+    // Final selection of columns with Delta_Lag
+    newDF = newDF.select(filterDF("*"), newDF("Delta_Lag"))
+
+    // Add a prefix to each column
+    val finalDF = addPrefixToColumns(newDF, "FT_")
+
+    finalDF
   }
 
   // Function to create OT Table
-  def createObservationTable(df_1: DataFrame, df_2: DataFrame, missingValueRate: Double): DataFrame = {
+  def createObservationTable(df_1: DataFrame, wban_df: DataFrame, missingValueRate: Double): DataFrame = {
 
     // Conversion columns to Double format
     val columnsToConvert = List("StationType","Visibility","DryBulbFarenheit","DryBulbCelsius","WetBulbFarenheit","WetBulbCelsius","DewPointFarenheit","DewPointCelsius","RelativeHumidity", "WindSpeed","WindDirection","ValueForWindCharacter","StationPressure","PressureTendency","PressureChange" ,"SeaLevelPressure", "HourlyPrecip", "Altimeter")
@@ -66,10 +85,13 @@ case object Restatement {
     // Creation of TimeStamp column
     newdf = newdf.withColumn("WEATHER_TIMESTAMP", to_timestamp(concat(col("DATE"), lit(" "), col("TIME")), "yyyy-MM-dd HHmm"))
 
+    // Delete of flag columns
+    newdf = newdf.drop(flagColumns: _*)
+
     // Join between WBAN Table and weather table
     // An “inner” join is performed, retaining only common data and excluding all data not linked to an airport.
     // Use the broadcast function to broadcast the smallest table to all cluster nodes and avoid file movements
-    newdf = newdf.join(broadcast(df_2), Seq("WBAN"), "inner")
+    newdf = newdf.join(broadcast(wban_df), Seq("WBAN"), "inner")
 
     // Add a prefix to each column
     newdf = addPrefixToColumns(newdf, "OT_")

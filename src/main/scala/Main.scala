@@ -1,6 +1,6 @@
 import org.apache.spark.sql.SparkSession
 import Parquet._
-import Statistiques._
+import statistics._
 import Restatement._
 import Library._
 import com.typesafe.config.ConfigFactory
@@ -44,7 +44,7 @@ object Main {
     countSinFlag.write.mode("overwrite").csv(outputCsv + "countSinFlag.csv")
 
     // Creation of the FT and OT tables
-    val FT_Table = createFlightTable(flight)
+    val FT_Table = createFlightTable(flight, wban)
     val OT_Table = createObservationTable(weather, wban, 0.20)
 
     // Export des tables FT et OT
@@ -55,12 +55,12 @@ object Main {
     // Jointure des tables FT et OT
 
     // AJOUTER LES JOINTURES
-    // METTRE LES EXPORT CSV ICI POUR VERIFIER LES DONNEES FT ET OT
+
 
     // Calculate descriptive statistics
-    val countAirport = Statistiques.countAirport(flight)
-    val countCarrier = Statistiques.countCarrier(flight, 15)
-    val countDelayedFlight = Statistiques.countDelayedFlight(flight)
+    val countAirport = statistics.countAirport(flight)
+    val countCarrier = statistics.countCarrier(flight, 15)
+    val countDelayedFlight = statistics.countDelayedFlight(flight)
     countAirport.write.mode("overwrite").csv(outputCsv + "descriptive_stats.csv")
     countCarrier.write.mode("overwrite").csv(outputCsv + "carrier_stats.csv")
     countDelayedFlight.write.mode("overwrite").csv(outputCsv + "delayed_stats.csv")
