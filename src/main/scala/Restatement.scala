@@ -93,6 +93,9 @@ case object Restatement {
     // Use the broadcast function to broadcast the smallest table to all cluster nodes and avoid file movements
     newdf = newdf.join(broadcast(wban_df), Seq("WBAN"), "inner")
 
+    // Rename the AIRPORT_ID column
+    newdf = newdf.withColumnRenamed("AirportID", "ORIGIN_AIRPORT_ID")
+
     // Add a prefix to each column
     newdf = addPrefixToColumns(newdf, "OT_")
 

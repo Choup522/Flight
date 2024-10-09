@@ -3,6 +3,7 @@ import Parquet._
 import statistics._
 import Restatement._
 import Library._
+import JoinOperations._
 import com.typesafe.config.ConfigFactory
 import java.io.File
 
@@ -53,9 +54,12 @@ object Main {
     exportDataToCSV(OT_Table, outputCsv + "OT_Table.csv")
 
     // Jointure des tables FT et OT
+    val FT_Table_prepared = DF_Map(FT_Table, "FT")
+    val OT_Table_prepared = DF_Map(OT_Table, "OT")
 
     // AJOUTER LES JOINTURES
-
+    val finalDF = DF_Reduce(FT_Table_prepared, OT_Table_prepared)
+    exportDataToCSV(finalDF, outputCsv + "Final_df.csv")
 
     // Calculate descriptive statistics
     val countAirport = statistics.countAirport(flight)
