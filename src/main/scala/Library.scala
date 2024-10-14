@@ -1,8 +1,7 @@
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType, DoubleType}
+import org.apache.spark.sql.types.{LongType, StringType, StructField, StructType}
 
 object Library {
 
@@ -24,6 +23,12 @@ object Library {
       .option("header", "true")
       .mode("overwrite")
       .csv(outputPath)
+  }
+
+  // Function to create a DataFrame from a sequence of tuples
+  def createExecutionTimesDataFrame(spark: SparkSession, times: Seq[(String, Double)]): DataFrame = {
+    import spark.implicits._
+    times.toDF("Task", "Duration (seconds)")
   }
 
   // Function to count missing values

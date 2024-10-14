@@ -178,52 +178,52 @@ case object Restatement {
     dfCorrected
   }
 
+  // Function to generate a dataset for the classification of flights
+  def DF_GenerateFlightDataset(in_DF: DataFrame, in_DS_Type: String, in_DelayedThreshold: Double, in_OnTimeThreshold: Double = 0.0): (DataFrame, DataFrame, DataFrame, DataFrame) = {
 
-
-
-
-
-
-
-
-
-
-
-
-  // Fonction pour le filtrage des données
-  def DF_GenerateFlightDataset(in_DF: DataFrame, in_DS_Type: String, in_DelayedThreshold: Int, in_OnTimeThreshold: Int = 0) : (DataFrame, DataFrame) = {
-
-    // On vérifie que le seuil de retard soit bien supérieur au seuil de ponctualité
+    // check that the delay threshold is greater than the on-time threshold
     if (in_DelayedThreshold < in_OnTimeThreshold) {
-      throw new IllegalArgumentException(s"DF_GenerateDataset: error $in_DelayedThreshold delay threshold must be greater than $in_OnTimeThreshold on-time!")
+      throw new IllegalArgumentException(s"DF_GenerateDataset: Le seuil de retard $in_DelayedThreshold doit être supérieur au seuil $in_OnTimeThreshold pour les vols à l'heure !")
     }
 
-    // Filtrage des vols détournés et annulées
-    val df_Filtered = in_DF.filter(col("DIVERTED") =!= 1 && col("CANCELLED") =!= 1)
+    // Filtrer les vols annulés ou détournés
+    //val df_Filtered = in_DF.filter(in_DF("DIVERTED") =!= 1 && in_DF("CANCELLED") =!= 1)
 
-    // Création des datasframes en fonction des filtres
+    //  Create a dataset of delayed flights by DS type
     val out_delayed = in_DS_Type match {
       case "DS1" =>
-        df_Filtered.filter(col("ARR_DELAY_NEW") >= in_DelayedThreshold && col("ARR_DELAY_NEW") === (col("WEATHER_DELAY") + col("NAS_DELAY")))
+        in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && in_DF("FT_ARR_DELAY_NEW") === (in_DF("FT_WEATHER_DELAY") + in_DF("FT_NAS_DELAY")))
       case "DS2" =>
-        df_Filtered.filter(col("ARR_DELAY_NEW") >= in_DelayedThreshold && (col("WEATHER_DELAY") > 0 || col("NAS_DELAY") >= in_DelayedThreshold))
+        in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && (in_DF("FT_WEATHER_DELAY") > 0 || in_DF("FT_NAS_DELAY") >= in_DelayedThreshold))
       case "DS3" =>
-        df_Filtered.filter(col("ARR_DELAY_NEW") >= in_DelayedThreshold && (col("WEATHER_DELAY") + col("NAS_DELAY") > 0))
+        in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && (in_DF("FT_WEATHER_DELAY") + in_DF("FT_NAS_DELAY") > 0))
       case "DS4" =>
-        df_Filtered.filter(col("ARR_DELAY_NEW") >= in_DelayedThreshold)
+        in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold)
       case _ =>
-        throw new IllegalArgumentException(s"DF_GenerateDataset: error $in_DS_Type dataset type not allowed (DS1,DS2,DS3,DS4 only) !")
+        throw new IllegalArgumentException(s"DF_GenerateDataset: Le type de dataset $in_DS_Type n'est pas autorisé (seulement DS1, DS2, DS3, DS4) !")
     }
 
-    // Génération des deux dataframes de sortie
-    val out_OnTime = df_Filtered.where(col("ARR_DELAY_NEW") <= in_OnTimeThreshold)
+    // Create a dataset of on-time flights
+    val out_OnTime = in_DF.filter(in_DF("FT_ARR_DELAY_NEW") <= in_OnTimeThreshold)
 
-    val out_delayed_with_col: DataFrame = out_delayed.withColumn("OnTime", lit(false))
-    val out_OnTime_with_col: DataFrame = out_OnTime.withColumn("OnTime", lit(true))
+    // Add an 'OnTime' column (False for delayed flights, True for on-time flights)
+    val out_delayed_with_OnTime = out_delayed.withColumn("FT_OnTime", lit(0)) // 0 for false
+    val out_OnTime_with_OnTime = out_OnTime.withColumn("FT_OnTime", lit(1)) // 1 for true
 
-    // Sortie de la fonction
-    (out_delayed_with_col, out_OnTime_with_col)
+    //  Counting delayed flights
+    val out_delayed_count = out_delayed_with_OnTime.count()
 
+    // Random division of delayed flights into 75% training and 25% test flights
+    val Array(out_delayed_train, out_delayed_test) = out_delayed_with_OnTime.randomSplit(Array(0.75, 0.25), seed = 100)
+
+    // Sampling on-time flights to match the number of delayed flights
+    val out_OnTime_sampled = out_OnTime_with_OnTime.sample(withReplacement = false, fraction = 1.0).limit(out_delayed_count.toInt)
+
+    // Random division of hourly flights into 75% training and 25% testing
+    val Array(out_OnTime_train, out_OnTime_test) = out_OnTime_sampled.randomSplit(Array(0.75, 0.25), seed = 100)
+
+    // Return training and test datasets for delayed and on-time flights
+    (out_delayed_train, out_delayed_test, out_OnTime_train, out_OnTime_test)
   }
-  
+
 }
