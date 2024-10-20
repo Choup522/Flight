@@ -6,5 +6,7 @@
     datapath_wban: "/Users/benjamin/Library/CloudStorage/Dropbox/FLIGHT-3Y/wban_airport_timezone.csv",
     output_flight: "/Users/benjamin/Documents/GitHub/Flight/ParquetFiles/Flight/",
     output_weather: "/Users/benjamin/Documents/GitHub/Flight/ParquetFiles/Weather/",
-    output_csv: "/Users/benjamin/Documents/GitHub/Flight/Output/" }
+    output_csv: "/Users/benjamin/Documents/GitHub/Flight/Output/",
+    output_final_Col_parquet: "/Users/benjamin/Documents/GitHub/Flight/ParquetFiles/Final_DF_Columns/",
+    output_final_line_parquet: "/Users/benjamin/Documents/GitHub/Flight/ParquetFiles/Final_DF_Lines/"}
 }

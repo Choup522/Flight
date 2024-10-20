@@ -116,6 +116,8 @@ case object RandomForest {
 
     println(s"Cross-validated Test Accuracy = $accuracy") // A CHANGER POUR UNE SORTIE CSV
 
+    // RAJOUTER LES TEMPS d4EXCUTION -->
+
   }
 
 }
