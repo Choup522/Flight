@@ -106,14 +106,14 @@ case object Restatement {
   private def imputeMissingValues(df: DataFrame, missingThreshold: Double = 0.20): DataFrame = {
 
     // Select numeric columns
-    val numericColumns = df.schema.fields.filter(field => field.dataType == "IntegerType" || field.dataType == "DoubleType").map(_.name)
+    val numericColumns = df.schema.fields.filter(field => field.dataType == IntegerType || field.dataType == DoubleType).map(_.name)
 
     // Calculate total number of rows
     val totalRows = df.count()
 
     // Filter columns to impute based on missing values threshold
     val columnsToImpute = numericColumns.filter { colName =>
-      val missingCount = df.filter(df(colName).isNull).count()
+      val missingCount = df.where(df(colName).isNull || df(colName) === "" || df(colName).isNaN).count()
       val missingPercentage = missingCount.toDouble / totalRows
       missingPercentage < missingThreshold
     }
@@ -183,11 +183,8 @@ case object Restatement {
 
     // check that the delay threshold is greater than the on-time threshold
     if (in_DelayedThreshold < in_OnTimeThreshold) {
-      throw new IllegalArgumentException(s"DF_GenerateDataset: Le seuil de retard $in_DelayedThreshold doit être supérieur au seuil $in_OnTimeThreshold pour les vols à l'heure !")
+      throw new IllegalArgumentException(s"DF_GenerateDataset: threshold $in_DelayedThreshold must be higher than threshold $in_OnTimeThreshold for on-time flights !")
     }
-
-    // Filtrer les vols annulés ou détournés
-    //val df_Filtered = in_DF.filter(in_DF("DIVERTED") =!= 1 && in_DF("CANCELLED") =!= 1)
 
     //  Create a dataset of delayed flights by DS type
     val out_delayed = in_DS_Type match {
@@ -200,7 +197,7 @@ case object Restatement {
       case "DS4" =>
         in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold)
       case _ =>
-        throw new IllegalArgumentException(s"DF_GenerateDataset: Le type de dataset $in_DS_Type n'est pas autorisé (seulement DS1, DS2, DS3, DS4) !")
+        throw new IllegalArgumentException(s"DF_GenerateDataset: Dataset type $in_DS_Type is not authorized (only DS1, DS2, DS3, DS4) !")
     }
 
     // Create a dataset of on-time flights

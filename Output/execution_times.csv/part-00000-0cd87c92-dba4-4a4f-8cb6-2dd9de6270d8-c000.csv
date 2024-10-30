@@ -1,0 +1,7 @@
+Task,Duration (seconds)
+read_parquet,31.492606708
+Create_tables,31.910182625
+Join_tables_first_step,0.083815625
+Join_tables_second_step_column,3.198115667
+Join_tables_second_step_line,1.469439709
+Store_parquet_FinalDf,449.2897745

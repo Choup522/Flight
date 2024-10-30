@@ -95,7 +95,6 @@ case object JoinOperations {
       // Join flights with weather data on origin date
       df_result = df_result
         .join(df_weather_origin, col(s"FT_ORIGIN_DATE_TIME_PART_$h") === col(s"OT_DATE_TIME_Part_$h"), "left")
-      // Join flights with weather data on destination date
         .join(df_weather_dest, col(s"FT_DEST_DATE_TIME_PART_$h") === col(s"OT_DEST_DATE_TIME_Part_$h"), "left")
       logger.info(s"DF_Reduce Cols: Completed join for lag hour $h")
     }
@@ -116,7 +115,7 @@ case object JoinOperations {
 
     // Step 2: Select relevant columns and add hours_lag to the flights dataframe
     val df_flights_with_lag = FT_flights
-      .select("FT_ORIGIN_AIRPORT_ID", "FT_DEST_AIRPORT_ID", "FT_TIMESTAMP", "FT_DEST_DATE_TIME")
+      //.select("FT_ORIGIN_AIRPORT_ID", "FT_DEST_AIRPORT_ID", "FT_TIMESTAMP", "FT_DEST_DATE_TIME")
       .withColumn("FT_ORIGIN_UNIX_TS", unix_timestamp($"FT_TIMESTAMP"))
       .withColumn("FT_DEST_UNIX_TS", unix_timestamp($"FT_DEST_DATE_TIME"))
       .crossJoin(hours_lag)
@@ -137,18 +136,15 @@ case object JoinOperations {
 
     // Step 5: Join the flights with the weather data for the origin and destination airports
     val df_result = df_flights_with_lag
-      .join(broadcast(df_weather_origin_partitioned),
-        col("FT_ORIGIN_DATE_TIME_LAG") === col("OT_WEATHER_TIMESTAMP_ORIG") &&
-          col("FT_ORIGIN_AIRPORT_ID") === col("OT_ORIGIN_AIRPORT_ID_ORIG"), "left")
-      .join(broadcast(df_weather_dest_partitioned),
-        col("FT_DEST_DATE_TIME_LAG") === col("OT_WEATHER_TIMESTAMP_DEST") &&
-          col("FT_DEST_AIRPORT_ID") === col("OT_ORIGIN_AIRPORT_ID_DEST"), "left")
+      .join(broadcast(df_weather_origin_partitioned), col("FT_ORIGIN_DATE_TIME_LAG") === col("OT_WEATHER_TIMESTAMP_ORIG") && col("FT_ORIGIN_AIRPORT_ID") === col("OT_ORIGIN_AIRPORT_ID_ORIG"), "left")
+      .join(broadcast(df_weather_dest_partitioned), col("FT_DEST_DATE_TIME_LAG") === col("OT_WEATHER_TIMESTAMP_DEST") && col("FT_DEST_AIRPORT_ID") === col("OT_ORIGIN_AIRPORT_ID_DEST"), "left")
 
     logger.info("DF_Reduce_Line: Completed DataFrame reduction with rows per hour")
 
     // Step 6: Return the final DataFrame
     df_result
   }
+
 }
 
 

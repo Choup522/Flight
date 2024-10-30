@@ -1,8 +1,9 @@
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{LongType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{DoubleType, FloatType, LongType, StringType, StructField, StructType}
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
+import java.io.PrintWriter
 
 object Library {
 
@@ -17,6 +18,7 @@ object Library {
       newDF.withColumnRenamed(colName, colName + suffix)
     }
   }
+
   // Function to convert columns to Double
   def convertColumnsToDouble(df: DataFrame, columns: List[String]): DataFrame = {
     columns.foldLeft(df) { (tempDf, colName) => tempDf.withColumn(colName, col(colName).cast("Double")) }
@@ -41,19 +43,29 @@ object Library {
   // Function to count missing values
   def count_missing_values(df: DataFrame, spark: SparkSession): DataFrame = {
 
-    // counter for missing values
-    val missing_values = df.columns.map { colName =>
-      val missingCount = df.filter(col(colName).isNull).count()
+    // Counter for missing values
+    val missing_values = df.schema.fields.map { field =>
+      val colName = field.name
+      val missingCount = field.dataType match {
+        case DoubleType | FloatType =>
+          df.filter(df(colName).isNull || df(colName).isNaN).count()
+
+        case StringType =>
+          df.filter(df(colName).isNull || df(colName) === "").count()
+
+        case _ =>
+          df.filter(df(colName).isNull).count()
+      }
       Row(colName, missingCount)
     }
 
-    // Define the schema
+    // Define the schema for the resulting DataFrame
     val schema = StructType(List(
       StructField("Column", StringType, nullable = false),
       StructField("Missing_values", LongType, nullable = false)
     ))
 
-    // Creation of the DataFrame from the missing values
+    // Create DataFrame from the missing values
     val missing_values_df = spark.createDataFrame(spark.sparkContext.parallelize(missing_values), schema)
 
     // Calculate the percentage of missing values
@@ -64,7 +76,7 @@ object Library {
   }
 
   // Function to collect the information on the cluster and partitions
-  def getClusterInfo(df: DataFrame, sc: SparkContext, spark: SparkSession): (Int, Int, Int, Int) = {
+  def getClusterInfo(sc: SparkContext): Int = {
 
     // Collect information on the cluster
     val executorInfo = sc.statusTracker.getExecutorInfos
@@ -72,27 +84,24 @@ object Library {
     // Calculate the total number of cores using the information from the executors
     val totalCores = executorInfo.map(info => info.numRunningTasks).sum
 
-    // Collect the number of partitions used by the DataFrame
-    val numPartitions = df.rdd.getNumPartitions
-
-    // Collect the size of the data in the DataFrame
-    val totalSizeInBytes = df.rdd
-      .map(_.toString.getBytes("UTF-8").length.toLong)
-      .reduce(_ + _)
-
-    // Convert the size to megabytes
-    val totalSizeInMB = totalSizeInBytes / (1024 * 1024)
-
     // Calculate the theoretical partitions based on the number of cores and the size of the data
-    val partitionsBasedOnCoresMin: Int = math.max(totalCores * 2, 1)
-    val partitionsBasedOnCoresMax: Int = math.max(totalCores * 4, 1)
-
-    // Calculate the theoretical partitions based on the size of the data (128 MB to 256 MB per partition)
-    val partitionsBasedOnSizeMin = math.ceil(totalSizeInMB / 256).toInt
-    val partitionsBasedOnSizeMax = math.ceil(totalSizeInMB / 128).toInt
+    val partitionsBasedOnCores: Int = math.max(totalCores * 3, 1)
 
     // Return the information
-    (partitionsBasedOnCoresMin, partitionsBasedOnCoresMax, partitionsBasedOnSizeMin, partitionsBasedOnSizeMax)
+    partitionsBasedOnCores
+  }
+
+  // Function to export the schema of a DataFrame
+  def exportSchema(df: DataFrame, outputPath: String): Unit = {
+
+    // Retrieve the schema in JSON format
+    val schemaJson = df.schema.json
+
+    // Write the schema to a file
+    new PrintWriter(outputPath) {
+      write(schemaJson)
+      close()
+    }
   }
 
 }

@@ -1,0 +1,3 @@
+min_date,max_date,size,dataset
+2012-01-01,2013-11-30,409846,flight_initial
+2012-01-01,2013-11-30,1192728,weather_initial

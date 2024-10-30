@@ -13,9 +13,9 @@ object Parquet {
 
     // Création des dataframes
     logger.info("createParquetFile: Reading CSV files")
-    var flight = spark.read.format("csv").option("header", "true").option("delimiter", ",").load(datapath_flight)
+    var flight = spark.read.format("csv").option("header", "true").option("delimiter", ",").load(s"$datapath_flight/*.csv")
     logger.info("createParquetFile: Flight CSV file read")
-    var weather = spark.read.format("csv").option("header", "true").option("delimiter", ",").load(datapath_weather)
+    var weather = spark.read.format("csv").option("header", "true").option("delimiter", ",").load(s"$datapath_weather/*.csv")
 
     // Transforming the date column in the Weather file
     logger.info("createParquetFile: Transforming the date column in the Weather file")
@@ -59,14 +59,33 @@ object Parquet {
     logger.info("createParquetFile: Parquet file creation completed")
   }
 
-  def readParquetFiles(OutputFile_1: String, OutputFile_2: String, spark: SparkSession, Statut: Boolean): (DataFrame, DataFrame)  = {
+  def readParquetFiles(OutputFile_1: String, OutputFile_2: String, spark: SparkSession, Status: Boolean): (DataFrame, DataFrame, DataFrame)  = {
 
     // Reading the parquet files
     logger.info("readParquetFiles: Reading the parquet files")
     val flight = spark.read.parquet(OutputFile_1)
     val weather = spark.read.parquet(OutputFile_2)
 
-    if (Statut) {
+    val dateCol = if (Status) {
+      "FL_DATE"
+    } else {
+      "FT_FL_DATE"
+    }
+
+    val weatherDateCol = if (Status) {
+      "Date"
+    } else {
+      "FT_FL_DATE"
+    }
+
+    // Collect initial stats
+    val initialFlightStats = flight.agg(min(dateCol).alias("min_date"), max(dateCol).alias("max_date"), count("*").alias("size")).withColumn("dataset", lit("flight_initial"))
+    val initialWeatherStats = weather.agg(min(weatherDateCol).alias("min_date"), max(weatherDateCol).alias("max_date"), count("*").alias("size")).withColumn("dataset", lit("weather_initial"))
+
+    var finalFlightStats: DataFrame = null
+    var finalWeatherStats: DataFrame = null
+
+    if (Status) {
       // Find common date ranges
       logger.info("readParquetFiles: Finding common date ranges")
       val flightDateRange = flight.agg(min("FL_DATE").alias("min_date"), max("FL_DATE").alias("max_date")).collect()(0)
@@ -89,19 +108,34 @@ object Parquet {
       val filteredFlight = flight.filter(flight("FL_DATE").between(commonStartDate, commonEndDate))
       val filteredWeather = weather.filter(weather("Date").between(commonStartDate, commonEndDate))
 
-      (filteredFlight, filteredWeather)
+      // Collect final stats
+      finalFlightStats = filteredFlight.agg(min("FL_DATE").alias("min_date"), max("FL_DATE").alias("max_date"), count("*").alias("size")).withColumn("dataset", lit("flight_filtered"))
+      finalWeatherStats = filteredWeather.agg(min("Date").alias("min_date"), max("Date").alias("max_date"), count("*").alias("size")).withColumn("dataset", lit("weather_filtered"))
+
+      // Combine all stats into a single DataFrame
+      val statsDF = initialFlightStats
+        .union(initialWeatherStats)
+        .union(finalFlightStats)
+        .union(finalWeatherStats)
+
+      (filteredFlight, filteredWeather, statsDF)
+
     } else {
-        (flight, weather)
+      val statsDF = initialFlightStats.union(initialWeatherStats)
+      Library.exportDataToCSV(statsDF, "stats.csv")
+      (flight, weather, statsDF)
     }
   }
 
   // Function to store the dataframes in parquet format
-  def storeParquetFiles(df: DataFrame, outputPath: String): Unit = {
+  def storeParquetFiles(df: DataFrame, outputPath: String, partitions: Seq[String] = Seq("FT_Year", "FT_FL_DATE"), partitionsBasedOnCores: Int): Unit = {
 
     logger.info("storeParquetFiles: Storing the dataframes in parquet format")
 
     df
+      .repartition(partitionsBasedOnCores)
       .write
+      .partitionBy(partitions: _*)
       .mode("overwrite")
       .format("parquet")
       .save(outputPath)

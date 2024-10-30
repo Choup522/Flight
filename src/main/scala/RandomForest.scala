@@ -1,6 +1,6 @@
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.ml.Pipeline
-import org.apache.spark.ml.classification.RandomForestClassifier
+import org.apache.spark.ml.classification.{RandomForestClassificationModel, RandomForestClassifier}
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
 import org.apache.spark.ml.feature.{StringIndexer, VectorAssembler}
 import org.apache.spark.ml.tuning.{CrossValidator, ParamGridBuilder}
@@ -15,6 +15,7 @@ case object RandomForest {
       val indexer = new StringIndexer()
         .setInputCol(col)
         .setOutputCol(s"${col}_indexed")
+        .setHandleInvalid("skip")
 
       tempDf = indexer
         .fit(tempDf)
@@ -57,7 +58,7 @@ case object RandomForest {
   }
 
   // Execution of the model
-  def randomForest(df: DataFrame, labelCol: String, featureCols: Array[String]): Unit = {
+  def randomForest(df: DataFrame, labelCol: String, featureCols: Array[String]): Map[String, Double]  = {
 
     // Identify String and Timestamp/Date columns in the DataFrame
     val stringCols = df.dtypes.filter(_._2 == "StringType").map(_._1)
@@ -113,13 +114,32 @@ case object RandomForest {
 
     val accuracy = evaluator.evaluate(predictions)
 
+    // Collect the metrics
+    val metrics = Map(
+      "accuracy" -> accuracy,
+      "numTrees" -> cvModel.bestModel.asInstanceOf[org.apache.spark.ml.PipelineModel]
+        .stages.last.asInstanceOf[RandomForestClassificationModel].getNumTrees.toDouble
+    )
 
-    println(s"Cross-validated Test Accuracy = $accuracy") // A CHANGER POUR UNE SORTIE CSV
-
-    // RAJOUTER LES TEMPS d4EXCUTION -->
-
+    // Return the metrics
+    metrics
   }
 
+  def saveMetricsAsCSV(spark: SparkSession, metrics: Map[String, Double], outputPath: String): Unit = {
+
+    import spark.implicits._
+
+    // Conversion of the metrics to a DataFrame
+    val metricsDF = metrics.toSeq.toDF("metric", "value")
+
+    // Save in CSV format
+    metricsDF
+      .coalesce(1)
+      .write
+      .option("header", "true")
+      .csv(s"$outputPath/metrics.csv")
+
+  }
 }
 
 
