@@ -26,7 +26,7 @@ This project is a Scala application that uses Apache Spark to classify flight da
 
 1. **Clone the repository**:
     ```sh
-    git clone <repository-url>
+    git clone [<repository-url>](https://github.com/Choup522/Flight.git)
     cd <repository-directory>
     ```
 
