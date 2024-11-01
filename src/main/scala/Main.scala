@@ -65,7 +65,7 @@ object Main {
     }
 
     // Creation of dataframe from execution times
-    val executionTimesDF = createExecutionTimesDataFrame(spark, executionTimes.toSeq)
+    val executionTimesDF = createExecutionTimesDataFrame(spark, executionTimes.toIndexedSeq)
     exportDataToCSV(executionTimesDF, outputCsv + "execution_times.csv")
 
     // End of the program

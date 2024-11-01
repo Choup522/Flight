@@ -1,14 +1,14 @@
 { spark:
   { app_name: "Flight", master: "local[*]" },
   paths: {
-    datapath_flight: "/Users/benjamin/Desktop/Flight-data/Flights/Flights/",
-    datapath_weather: "/Users/benjamin/Desktop/Flight-data/Flights/Weather/",
-    datapath_wban: "/Users/benjamin/Library/CloudStorage/Dropbox/FLIGHT-3Y/wban_airport_timezone.csv",
-    output_flight: "/Users/benjamin/Documents/GitHub/Flight/ParquetFiles/Flight/",
-    output_weather: "/Users/benjamin/Documents/GitHub/Flight/ParquetFiles/Weather/",
-    output_csv: "/Users/benjamin/Documents/GitHub/Flight/Output/",
-    output_final_Col_parquet: "/Users/benjamin/Documents/GitHub/Flight/ParquetFiles/Final_DF_Columns/",
-    output_final_line_parquet: "/Users/benjamin/Documents/GitHub/Flight/ParquetFiles/Final_DF_Lines/"},
+    datapath_flight: "../Flight/Inputs/Flights/",
+    datapath_weather: "../Flight/Inputs/Weather/",
+    datapath_wban: "../Flight/Inputs/wban_airport_timezone.csv",
+    output_flight: "../Flight/ParquetFiles/Flight/",
+    output_weather: "../Flight/ParquetFiles/Weather/",
+    output_csv: "../Flight/Output/",
+    output_final_Col_parquet: "../Flight/ParquetFiles/Final_DF_Columns/",
+    output_final_line_parquet: "../Flight/ParquetFiles/Final_DF_Lines/"},
   execution: {
     reload_and_train: "BigData" # Possible values : "BigData", "MachineLearning", "All"
   }
