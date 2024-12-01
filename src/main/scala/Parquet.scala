@@ -1,11 +1,9 @@
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.log4j.Logger
+import LoggerFactory.logger
 
 object Parquet {
-
-  // Initialize the logger
-  private val logger = Logger.getLogger("Parquet_Logger")
 
   def createParquetFile(datapath_flight: String, datapath_weather: String, outputFile_flight: String, outputFile_weather: String, spark: SparkSession, sample: Boolean): Unit = {
 
@@ -13,9 +11,11 @@ object Parquet {
 
     // Création des dataframes
     logger.info("createParquetFile: Reading CSV files")
-    var flight = spark.read.format("csv").option("header", "true").option("delimiter", ",").load(s"$datapath_flight/*.csv")
+    var flight = spark.read.format("csv").option("header", "true").option("delimiter", ",").load(datapath_flight)
     logger.info("createParquetFile: Flight CSV file read")
-    var weather = spark.read.format("csv").option("header", "true").option("delimiter", ",").load(s"$datapath_weather/*.csv")
+    logger.info("createParquetFile: Reading Weather TXT files")
+    var weather = spark.read.format("csv").option("header", "true").option("delimiter", ",").load(datapath_weather)
+    logger.info("createParquetFile: Weather TXT file read")
 
     // Transforming the date column in the Weather file
     logger.info("createParquetFile: Transforming the date column in the Weather file")
@@ -59,12 +59,27 @@ object Parquet {
     logger.info("createParquetFile: Parquet file creation completed")
   }
 
-  def readParquetFiles(OutputFile_1: String, OutputFile_2: String, spark: SparkSession, Status: Boolean): (DataFrame, DataFrame, DataFrame)  = {
+  def readParquetFiles(OutputFile_1: String, OutputFile_2: String, outputCsv: String, spark: SparkSession, Status: Boolean, sampleFraction: Option[Double] = None): (DataFrame, DataFrame, DataFrame)  = {
 
     // Reading the parquet files
     logger.info("readParquetFiles: Reading the parquet files")
-    val flight = spark.read.parquet(OutputFile_1)
-    val weather = spark.read.parquet(OutputFile_2)
+
+    // Reading the parquet files
+    val flight = sampleFraction match {
+      case Some(fraction) =>
+        logger.info(s"readParquetFiles: Loading a sample with fraction $fraction for flight data")
+        spark.read.parquet(OutputFile_1).sample(withReplacement = false, fraction)
+      case None =>
+        spark.read.parquet(OutputFile_1)
+    }
+
+    val weather = sampleFraction match {
+      case Some(fraction) =>
+        logger.info(s"readParquetFiles: Loading a sample with fraction $fraction for weather data")
+        spark.read.parquet(OutputFile_2).sample(withReplacement = false, fraction)
+      case None =>
+        spark.read.parquet(OutputFile_2)
+    }
 
     val dateCol = if (Status) {
       "FL_DATE"
@@ -122,18 +137,68 @@ object Parquet {
 
     } else {
       val statsDF = initialFlightStats.union(initialWeatherStats)
-      Library.exportDataToCSV(statsDF, "stats.csv")
+      Library.exportDataToCSV(statsDF, outputCsv + "stats.csv")
       (flight, weather, statsDF)
     }
   }
 
+  def readParquetFiles_2(OutputFile_1: String, OutputFile_2: String, spark: SparkSession, fraction: Double, generationMode: String = "cols"): (DataFrame, DataFrame) = {
+
+    // Reading the parquet files
+    logger.info("readParquetFiles: Starting to read the parquet files")
+
+    try {
+      generationMode match {
+        case "cols" =>
+          val df_cols = spark.read.parquet(OutputFile_1).sample(fraction)
+          if (df_cols.isEmpty) {
+            logger.warn(s"Le DataFrame chargé depuis $OutputFile_1 est vide.")
+            (spark.emptyDataFrame, spark.emptyDataFrame)
+          } else {
+            logger.info(s"DataFrame chargé avec succès depuis $OutputFile_1 avec fraction = $fraction")
+            (df_cols, spark.emptyDataFrame)
+          }
+
+        case "lines" =>
+          val df_lines = spark.read.parquet(OutputFile_2).sample(fraction)
+          if (df_lines.isEmpty) {
+            logger.warn(s"Le DataFrame chargé depuis $OutputFile_2 est vide.")
+            (spark.emptyDataFrame, spark.emptyDataFrame)
+          } else {
+            logger.info(s"DataFrame chargé avec succès depuis $OutputFile_2 avec fraction = $fraction")
+            (spark.emptyDataFrame, df_lines)
+          }
+
+        case "both" =>
+          val df_cols = spark.read.parquet(OutputFile_1).sample(fraction)
+          val df_lines = spark.read.parquet(OutputFile_2).sample(fraction)
+
+          if (df_cols.isEmpty || df_lines.isEmpty) {
+            logger.warn("Un ou plusieurs DataFrames sont vides après échantillonnage.")
+            (spark.emptyDataFrame, spark.emptyDataFrame)
+          } else {
+            logger.info(s"Les deux DataFrames ont été chargés avec succès avec fraction = $fraction")
+            (df_cols, df_lines)
+          }
+
+        case _ =>
+          logger.error(s"Mode de génération invalide : $generationMode")
+          (spark.emptyDataFrame, spark.emptyDataFrame)
+      }
+    } catch {
+      case e: Exception =>
+        logger.error(s"Erreur lors de la lecture des fichiers Parquet : ${e.getMessage}")
+        (spark.emptyDataFrame, spark.emptyDataFrame)
+    }
+  }
+
   // Function to store the dataframes in parquet format
-  def storeParquetFiles(df: DataFrame, outputPath: String, partitions: Seq[String] = Seq("FT_Year", "FT_FL_DATE"), partitionsBasedOnCores: Int): Unit = {
+  def storeParquetFiles(df: DataFrame, outputPath: String, partitions: Seq[String] = Seq("FT_Year", "FT_FL_DATE"), partitionsBasedOnCores: Int = 100): Unit = {
 
     logger.info("storeParquetFiles: Storing the dataframes in parquet format")
 
     df
-      .repartition(partitionsBasedOnCores)
+      //.repartition(partitionsBasedOnCores)
       .write
       .partitionBy(partitions: _*)
       .mode("overwrite")

@@ -58,7 +58,7 @@ case object RandomForest {
   }
 
   // Execution of the model
-  def randomForest(df: DataFrame, labelCol: String, featureCols: Array[String]): Map[String, Double]  = {
+  def randomForest(df: DataFrame, labelCol: String, featureCols: Array[String], numberOfTrees: Array[Int], deepth: Array[Int], folds: Int): Map[String, Double]  = {
 
     // Identify String and Timestamp/Date columns in the DataFrame
     val stringCols = df.dtypes.filter(_._2 == "StringType").map(_._1)
@@ -83,8 +83,8 @@ case object RandomForest {
 
     // Param grid for Grid Search
     val paramGrid = new ParamGridBuilder()
-      .addGrid(randomForest.numTrees, Array(50)) // Testing different numbers of trees Array(50, 100, 150))
-      .addGrid(randomForest.maxDepth, Array(5))    // Testing different depths Array(5, 10, 15))
+      .addGrid(randomForest.numTrees, numberOfTrees) // Testing different numbers of trees Array(50, 100, 150))
+      .addGrid(randomForest.maxDepth, deepth)    // Testing different depths Array(5, 10, 15))
       .build()
 
     // Cross-validator creation
@@ -95,7 +95,7 @@ case object RandomForest {
         .setPredictionCol("prediction")
         .setMetricName("accuracy"))
       .setEstimatorParamMaps(paramGrid)
-      .setNumFolds(5)  // Cross-validation with 5 folds
+      .setNumFolds(folds)  // Cross-validation with 5 folds
 
     // Splitting data into training and test sets
     val Array(trainingData, testData) = processedDF.randomSplit(Array(0.8, 0.2))

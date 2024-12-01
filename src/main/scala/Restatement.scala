@@ -1,8 +1,11 @@
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{IntegerType, StringType, DoubleType}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.types.{DoubleType, IntegerType, StringType}
 import org.apache.spark.ml.feature.Imputer
 import Library._
+import org.apache.log4j.Logger
+import LoggerFactory.logger
 
 case object Restatement {
 
@@ -179,29 +182,35 @@ case object Restatement {
   }
 
   // Function to generate a dataset for the classification of flights
-  def DF_GenerateFlightDataset(in_DF: DataFrame, in_DS_Type: String, in_DelayedThreshold: Double, in_OnTimeThreshold: Double = 0.0): (DataFrame, DataFrame, DataFrame, DataFrame) = {
+  def DF_GenerateFlightDataset(spark: SparkSession, in_DF: DataFrame, in_DS_Type: String, in_DelayedThreshold: Double, in_OnTimeThreshold: Double = 0.0, fraction: Double): (DataFrame, DataFrame, DataFrame, DataFrame) = {
 
     // check that the delay threshold is greater than the on-time threshold
-    if (in_DelayedThreshold < in_OnTimeThreshold) {
-      throw new IllegalArgumentException(s"DF_GenerateDataset: threshold $in_DelayedThreshold must be higher than threshold $in_OnTimeThreshold for on-time flights !")
+    require(in_DelayedThreshold >= in_OnTimeThreshold,
+      s"DF_GenerateDataset: threshold $in_DelayedThreshold must be higher than threshold $in_OnTimeThreshold for on-time flights!")
+
+    // Application of the sampling rate
+    val sampled_DF = in_DF.sample(withReplacement = false, fraction)
+    if (sampled_DF.isEmpty) {
+      logger.warn("DF_GenerateFlightDataset: DataFrame is empty after sampling")
+      return (spark.emptyDataFrame, spark.emptyDataFrame, spark.emptyDataFrame, spark.emptyDataFrame)
     }
 
     //  Create a dataset of delayed flights by DS type
     val out_delayed = in_DS_Type match {
       case "DS1" =>
-        in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && in_DF("FT_ARR_DELAY_NEW") === (in_DF("FT_WEATHER_DELAY") + in_DF("FT_NAS_DELAY")))
+        sampled_DF.where(col("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && col("FT_ARR_DELAY_NEW") === (col("FT_WEATHER_DELAY") + col("FT_NAS_DELAY")))
       case "DS2" =>
-        in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && (in_DF("FT_WEATHER_DELAY") > 0 || in_DF("FT_NAS_DELAY") >= in_DelayedThreshold))
+        sampled_DF.where(col("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && (col("FT_WEATHER_DELAY") > 0 || col("FT_NAS_DELAY") >= in_DelayedThreshold))
       case "DS3" =>
-        in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && (in_DF("FT_WEATHER_DELAY") + in_DF("FT_NAS_DELAY") > 0))
+        sampled_DF.where(col("FT_ARR_DELAY_NEW") >= in_DelayedThreshold && (col("FT_WEATHER_DELAY") + col("FT_NAS_DELAY") > 0))
       case "DS4" =>
-        in_DF.where(in_DF("FT_ARR_DELAY_NEW") >= in_DelayedThreshold)
+        sampled_DF.where(col("FT_ARR_DELAY_NEW") >= in_DelayedThreshold)
       case _ =>
         throw new IllegalArgumentException(s"DF_GenerateDataset: Dataset type $in_DS_Type is not authorized (only DS1, DS2, DS3, DS4) !")
     }
 
     // Create a dataset of on-time flights
-    val out_OnTime = in_DF.filter(in_DF("FT_ARR_DELAY_NEW") <= in_OnTimeThreshold)
+    val out_OnTime = sampled_DF.where(col("FT_ARR_DELAY_NEW") <= in_OnTimeThreshold)
 
     // Add an 'OnTime' column (False for delayed flights, True for on-time flights)
     val out_delayed_with_OnTime = out_delayed.withColumn("FT_OnTime", lit(0)) // 0 for false

@@ -3,11 +3,9 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.TimestampType
 import org.apache.log4j.Logger
 import Library._
+import LoggerFactory.logger
 
 case object JoinOperations {
-
-  // Initialize the logger
-  private val logger = Logger.getLogger("JoinOperations_Logger")
 
   // Function to prepare the DataFrame for the join operation
   def DF_Map(in_DF: DataFrame, in_DF_Type: String): DataFrame = {
@@ -56,7 +54,7 @@ case object JoinOperations {
   }
 
   // Function to join dataframes based on columns
-  def DF_Reduce_Cols(FT_flights: DataFrame, OT_weather: DataFrame, numPartitions: Int) : DataFrame = {
+  def DF_Reduce_Cols(FT_flights: DataFrame, OT_weather: DataFrame, numPartitions: Int = 100) : DataFrame = {
 
     logger.info("DF_Reduce Cols: Starting DataFrame reduction")
 

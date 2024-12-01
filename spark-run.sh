@@ -1,15 +1,16 @@
 #!/bin/bash
 
 # Description: This script is used to run a Spark application in the cluster mode.
-APP_NAME="FlightClassification"
+APP_NAME="Flight"
 MAIN_CLASS="Main"
 DEPLOYED_MODE="client"
-SPARK_MASTER="spark://vmhadoopmaster.cluster.lamsade.dauphine.fr:7077"
-CONFIG_FILE="src/main/resources/config.yaml"
-EXECUTOR_CORES="4"
-EXECUTOR_MEMORY="1G"
+SPARK_MASTER="local[*]"
+#SPARK_MASTER="spark://vmhadoopmaster.cluster.lamsade.dauphine.fr:7077"
+EXECUTOR_CORES="2"
+EXECUTOR_MEMORY="2G"
 NUM_EXECUTORS="2"
-JAR_FILE=""
+JAR_FILE="target/scala-2.12/Flight-assembly-0.1.0-SNAPSHOT.jar"
+#JAR_FILE="./workspace/Flight-assembly-0.1.0-SNAPSHOT.jar"
 
 # Run the Spark application
 spark-submit \
@@ -20,5 +21,8 @@ spark-submit \
     --executor-cores $EXECUTOR_CORES \
     --executor-memory $EXECUTOR_MEMORY \
     --num-executors $NUM_EXECUTORS \
-    --files $CONFIG_FILE \
-    $JAR_FILE
+    $JAR_FILE \
+    "data/"
+
+
+
