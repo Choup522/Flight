@@ -28,7 +28,7 @@
   "execution": {
     "reload_and_train": "All",
     "environment": "local",
-    "generation_mode": "cols",
+    "generation_mode": "lines",
     "sample": true,
     "fraction": 0.001,
     "reload_parquet": false
