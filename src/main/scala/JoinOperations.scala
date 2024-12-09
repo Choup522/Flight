@@ -56,9 +56,8 @@ case object JoinOperations {
   // Function to join dataframes based on columns
   def DF_Reduce_Cols(FT_flights: DataFrame, OT_weather: DataFrame, numPartitions: Int = 100) : DataFrame = {
 
-    logger.info("DF_Reduce Cols: Starting DataFrame reduction")
-
     // Sort datetime in ascending order
+    logger.info("DF_Reduce Cols: Starting DataFrame reduction")
     val df_weather_sorted = OT_weather.sort(asc("OT_WEATHER_TIMESTAMP")).repartitionByRange(numPartitions, col("OT_WEATHER_TIMESTAMP"))
     val df_flights_sorted = FT_flights.sort(asc("FT_TIMESTAMP")).repartitionByRange(numPartitions, col("FT_TIMESTAMP"))
     logger.info("DF_Reduce Cols: Sorted weather and flight data by OT_WEATHER_TIMESTAMP")

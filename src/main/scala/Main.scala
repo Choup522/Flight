@@ -7,13 +7,12 @@ import JoinOperations._
 import RandomForest.saveMetricsAsCSV
 import com.typesafe.config.ConfigFactory
 import org.apache.log4j.Logger
-
 import scala.collection.mutable
 import java.nio.file.{Files, Paths}
 import com.typesafe.config.Config
 import LoggerFactory.logger
-import org.apache.spark.storage.StorageLevel
 
+// Creation of the logger object
 object LoggerFactory {
   val logger: Logger = Logger.getLogger("Main_Logger")
 }
@@ -29,7 +28,6 @@ object Main {
     }
 
     // Initialize the logger
-    //val logger = Logger.getLogger("Main_Logger")
     logger.info("Starting the application")
 
     // Get the environment
@@ -41,9 +39,16 @@ object Main {
       config.getConfig("paths.hdfs")
     }
 
+    // Creation of the spark session
     val spark = SparkSession.builder()
       .appName(config.getString("spark.app_name"))
       .master(config.getString("spark.master"))
+      .config("spark.executor.memory", "4g")
+      .config("spark.driver.memory", "4g")
+      .config("spark.executor.cores", "2")
+      .config("spark.sql.shuffle.partitions", "8")
+      .config("spark.network.timeout", "300s")
+      .config("spark.executor.heartbeatInterval", "60s")
       .getOrCreate()
 
     logger.info("Spark session created")
@@ -54,12 +59,12 @@ object Main {
     val reloadAndTrain = config.getString("execution.reload_and_train")
 
     // Initialize the generation mode
-    val generationMode: String = "cols"
+    val generationMode = config.getString("execution.generation_mode")
 
     // Initialization of the value for sample
-    val sample: Boolean = true
-    val fraction: Double = 0.01
-    val reloadParquet: Boolean = false
+    val sample = config.getBoolean("execution.sample")
+    val fraction = config.getDouble("execution.fraction")
+    val reloadParquet = config.getBoolean("execution.reload_parquet")
 
     // Creation of the execution times array
     val executionTimes = mutable.ArrayBuffer[(String, Double)]()
@@ -78,16 +83,16 @@ object Main {
 
       case "BigData" =>
         logger.info("BigData mode")
-        prepareAndLoadData(spark, datapath_flight, datapath_weather, datapath_wban, outputFile_flight, outputFile_weather, outputCsv, outputFinal_Cols_Parquet, outputFinal_Lines_Parquet, executionTimes, sample)
+        prepareAndLoadData(spark, datapath_flight, datapath_weather, datapath_wban, outputFile_flight, outputFile_weather, outputCsv, outputFinal_Cols_Parquet, outputFinal_Lines_Parquet, executionTimes, sample, fraction)
 
       case "MachineLearning" =>
         logger.info("Machine Learning mode")
-        reloadAndGenerateDatasetsAndTrain(spark, outputFinal_Cols_Parquet, outputFinal_Lines_Parquet, outputCsv, executionTimes, useOnlyFirstDatasetForTest = true, fraction, generationMode, reloadParquet, spark.emptyDataFrame, spark.emptyDataFrame)
+        reloadAndGenerateDatasetsAndTrain(spark, outputCsv, executionTimes, generationMode, spark.emptyDataFrame, spark.emptyDataFrame)
 
       case "All" =>
         logger.info("All mode")
-        val (finalDF_Cols, finalDF_Lines) = prepareAndLoadData(spark, datapath_flight, datapath_weather, datapath_wban, outputFile_flight, outputFile_weather, outputCsv, outputFinal_Cols_Parquet, outputFinal_Lines_Parquet, executionTimes, sample)
-        reloadAndGenerateDatasetsAndTrain(spark, outputFinal_Cols_Parquet, outputFinal_Lines_Parquet, outputCsv, executionTimes, useOnlyFirstDatasetForTest = true, fraction, generationMode, reloadParquet, finalDF_Cols, finalDF_Lines)
+        val (finalDF_Cols, finalDF_Lines) = prepareAndLoadData(spark, datapath_flight, datapath_weather, datapath_wban, outputFile_flight, outputFile_weather, outputCsv, outputFinal_Cols_Parquet, outputFinal_Lines_Parquet, executionTimes, sample, fraction)
+        reloadAndGenerateDatasetsAndTrain(spark, outputCsv, executionTimes, generationMode, finalDF_Cols, finalDF_Lines)
 
       case _ =>
         logger.error("Invalid mode")
@@ -112,7 +117,7 @@ object Main {
 
   }
 
-  private def prepareAndLoadData(spark: SparkSession, datapath_flight: String, datapath_weather: String, datapath_wban: String, outputFile_flight: String, outputFile_weather: String, outputCsv: String, outputFinal_Cols_Parquet: String, outputFinal_Lines_Parquet: String, executionTimes: mutable.ArrayBuffer[(String, Double)], sample: Boolean): (DataFrame, DataFrame) = {
+  private def prepareAndLoadData(spark: SparkSession, datapath_flight: String, datapath_weather: String, datapath_wban: String, outputFile_flight: String, outputFile_weather: String, outputCsv: String, outputFinal_Cols_Parquet: String, outputFinal_Lines_Parquet: String, executionTimes: mutable.ArrayBuffer[(String, Double)], sample: Boolean, fraction: Double): (DataFrame, DataFrame) = {
 
     // Création of parquet files
     val flightParquetExists = Files.exists(Paths.get(outputFile_flight))
@@ -123,7 +128,7 @@ object Main {
       // Variables to define the sample mode
       logger.info("Parquet Files not found. Creation of Parquet files.")
       val startCreateParquetTime = System.nanoTime()
-      createParquetFile(datapath_flight, datapath_weather, outputFile_flight , outputFile_weather, spark, sample)
+      createParquetFile(datapath_flight, datapath_weather, outputFile_flight , outputFile_weather, spark, sample, fraction)
       val endCreateParquetTime = System.nanoTime()
       val durationCreateParquetTime = (endCreateParquetTime - startCreateParquetTime) / 1e9d
       executionTimes += (("create_parquet", durationCreateParquetTime))
@@ -180,9 +185,6 @@ object Main {
     val durationJoinFirstStepTime = (endJoinFirstStepTime - startJoinFirstStepTime) / 1e9d
     executionTimes += (("Join_tables_first_step", durationJoinFirstStepTime))
 
-    // Get the cluster information
-    val partitionsBasedOnCores = getClusterInfo(spark.sparkContext)
-
     // Second step for the join of the tables
     logger.info("Second step for the join of the tables")
     val startJoinSecondStepInColumnTime = System.nanoTime()
@@ -211,69 +213,51 @@ object Main {
     exportSchema(finalDF_Cols, outputCsv + "schema_finalDF_Cols.json")
     exportSchema(finalDF_Lines, outputCsv + "schema_finalDF_Lines.json")
 
+    // Validate the dataframes
+    try {
+      require(!finalDF_Cols.isEmpty, "Le DataFrame est vide.")
+    } catch {
+      case e: IllegalArgumentException =>
+        logger.error(s"Validation Failed : ${e.getMessage}")
+    }
+
     (finalDF_Cols, finalDF_Lines)
   }
 
-  private def reloadAndGenerateDatasetsAndTrain(spark: SparkSession, outputFinal_Cols_Parquet: String, outputFinal_Lines_Parquet: String, outputCsv: String, executionTimes: mutable.ArrayBuffer[(String, Double)], useOnlyFirstDatasetForTest: Boolean = true, fraction: Double, generationMode: String = "cols", reloadParquet: Boolean, DataframeCols : DataFrame, DataFrameLines: DataFrame): Unit = {
+  private def reloadAndGenerateDatasetsAndTrain(spark: SparkSession, outputCsv: String, executionTimes: mutable.ArrayBuffer[(String, Double)], generationMode: String = "cols", DataframeCols : DataFrame, DataFrameLines: DataFrame): Unit = {
 
-    var finalDF_Cols_Reloaded: DataFrame = spark.emptyDataFrame
-    var finalDF_Lines_Reloaded: DataFrame = spark.emptyDataFrame
-
-    if (reloadParquet) {
-      // Reload the parquet files
-      val startReloadParquetFinalDfTime = System.nanoTime()
-      val reloadedData = readParquetFiles_2(outputFinal_Cols_Parquet, outputFinal_Lines_Parquet, spark, 0.01, generationMode)
-
-      finalDF_Cols_Reloaded = reloadedData._1
-      finalDF_Lines_Reloaded = reloadedData._2
-
-      val endReloadParquetFinalDfTime = System.nanoTime()
-      val durationReloadParquetFinalDfTime = (endReloadParquetFinalDfTime - startReloadParquetFinalDfTime) / 1e9d
-      executionTimes += (("Reload_parquet_FinalDf", durationReloadParquetFinalDfTime))
-
-    } else {
-
-      finalDF_Cols_Reloaded = if (generationMode == "cols" || generationMode == "both") DataframeCols else spark.emptyDataFrame
-      finalDF_Lines_Reloaded = if (generationMode == "lines" || generationMode == "both") DataFrameLines else spark.emptyDataFrame
-    }
+    logger.info("Using dataframes already created")
+    val finalDF_Cols_Reloaded = if (generationMode == "cols" || generationMode == "both") DataframeCols else spark.emptyDataFrame
+    val finalDF_Lines_Reloaded = if (generationMode == "lines" || generationMode == "both") DataFrameLines else spark.emptyDataFrame
+    //}
 
     // Generation of filtered datasets
+    logger.info("Creation of the filtered DataSet DS1")
     val startCreationOfFilteredDataframeTime = System.nanoTime()
-    val intervals = List(15)
+    val interval = 15
+    val dsName = "DS1"
 
-    // Condition to generate only DS1 if `useOnlyFirstDatasetForTest` is true
-    val datasetIntervals = if (useOnlyFirstDatasetForTest) intervals.take(1) else intervals
+    val datasets: Map[String, DataFrame] = if (generationMode == "cols" || generationMode == "both") {
+      val (df_delayed_train_Cols, df_delayed_test_Cols, df_Ontime_train_Cols, df_Ontime_test_Cols) =
+        DF_GenerateFlightDataset(spark, finalDF_Cols_Reloaded, dsName, interval, 1.0)
 
-    // Iteration to generate DS1, DS2, etc. with a variable time interval
-    val datasets = datasetIntervals.zipWithIndex.flatMap { case (interval, idx) =>
-      val dsName = s"DS${idx + 1}"
+      Map(
+        s"${dsName}_Cols_${interval}min_delayed_train" -> df_delayed_train_Cols,
+        s"${dsName}_Cols_${interval}min_delayed_test" -> df_delayed_test_Cols,
+        s"${dsName}_Cols_${interval}min_ontime_train" -> df_Ontime_train_Cols,
+        s"${dsName}_Cols_${interval}min_ontime_test" -> df_Ontime_test_Cols
+      )
+    } else if (generationMode == "lines" || generationMode == "both") {
+      val (df_delayed_train_Lines, df_delayed_test_Lines, df_Ontime_train_Lines, df_Ontime_test_Lines) =
+        DF_GenerateFlightDataset(spark, finalDF_Lines_Reloaded, dsName, interval, 1.0)
 
-      val colsDatasets = if (generationMode == "cols" || generationMode == "both") {
-        val (df_delayed_train_Cols, df_delayed_test_Cols, df_Ontime_train_Cols, df_Ontime_test_Cols) =
-          DF_GenerateFlightDataset(spark, finalDF_Cols_Reloaded, dsName, interval, 0.0, fraction)
-
-        Seq(
-          s"${dsName}_Cols_${interval}min_delayed_train" -> df_delayed_train_Cols,
-          s"${dsName}_Cols_${interval}min_delayed_test" -> df_delayed_test_Cols,
-          s"${dsName}_Cols_${interval}min_ontime_train" -> df_Ontime_train_Cols,
-          s"${dsName}_Cols_${interval}min_ontime_test" -> df_Ontime_test_Cols
-        )
-      } else Seq.empty
-
-      val linesDatasets = if (generationMode == "lines" || generationMode == "both") {
-        val (df_delayed_train_Lines, df_delayed_test_Lines, df_Ontime_train_Lines, df_Ontime_test_Lines) =
-          DF_GenerateFlightDataset(spark, finalDF_Lines_Reloaded, dsName, interval, 0.0, fraction)
-
-        Seq(
-          s"${dsName}_Lines_${interval}min_delayed_train" -> df_delayed_train_Lines,
-          s"${dsName}_Lines_${interval}min_delayed_test" -> df_delayed_test_Lines,
-          s"${dsName}_Lines_${interval}min_ontime_train" -> df_Ontime_train_Lines,
-          s"${dsName}_Lines_${interval}min_ontime_test" -> df_Ontime_test_Lines
-        )
-      } else Seq.empty
-
-      colsDatasets ++ linesDatasets
-    }.toMap
+      Map(
+        s"${dsName}_Lines_${interval}min_delayed_train" -> df_delayed_train_Lines,
+        s"${dsName}_Lines_${interval}min_delayed_test" -> df_delayed_test_Lines,
+        s"${dsName}_Lines_${interval}min_ontime_train" -> df_Ontime_train_Lines,
+        s"${dsName}_Lines_${interval}min_ontime_test" -> df_Ontime_test_Lines
+      )
+    } else Map.empty[String, DataFrame]
 
     val endCreationOfFilteredDataframeTime = System.nanoTime()
     val durationCreationOfFilteredDataframeTime = (endCreationOfFilteredDataframeTime - startCreationOfFilteredDataframeTime) / 1e9d
@@ -281,41 +265,32 @@ object Main {
 
     // Machine Learning
     // Define the feature columns and the label
-    val startRandomForestTime = System.nanoTime()
+    logger.info("Machine Learning phase")
+    val startMLTime = System.nanoTime()
     val labelCol = "FT_OnTime"
 
     if (generationMode == "cols" || generationMode == "both") {
-      val featureCols_1 = finalDF_Cols_Reloaded.columns.filter(_ != labelCol)
+      val featureCols = finalDF_Cols_Reloaded.columns.filter(_ != labelCol)
+      val reducedColsDataset = datasets(s"${dsName}_Cols_${interval}min_delayed_train")
+        .select(labelCol, featureCols: _*)
+        .repartition(100)
 
-      datasetIntervals.zipWithIndex.foreach { case (interval, idx) =>
-        val dsName = s"DS${idx + 1}"
-
-        val reducedColsDataset = datasets(s"${dsName}_Cols_${interval}min_delayed_train")
-          .sample(withReplacement = false, fraction = 0.1)
-          .select(labelCol, featureCols_1: _*)
-
-        val metricsCols = RandomForest.randomForest(reducedColsDataset, labelCol, featureCols_1, Array(50), Array(5), 5)
-        saveMetricsAsCSV(spark, metricsCols, s"$outputCsv/metrics_${dsName}_Cols.csv")
-      }
+      val metricsCols = RandomForest.randomForest(reducedColsDataset, labelCol, featureCols, 20, 5, 3)
+      saveMetricsAsCSV(spark, metricsCols, s"$outputCsv/metrics_${dsName}_Cols.csv")
     }
 
     if (generationMode == "lines" || generationMode == "both") {
-      val featureCols_2 = finalDF_Lines_Reloaded.columns.filter(_ != labelCol)
+      val featureCols = finalDF_Lines_Reloaded.columns.filter(_ != labelCol)
+      val reducedLinesDataset = datasets(s"${dsName}_Lines_${interval}min_delayed_train")
+        .select(labelCol, featureCols: _*)
+        .repartition(100)
 
-      datasetIntervals.zipWithIndex.foreach { case (interval, idx) =>
-        val dsName = s"DS${idx + 1}"
-
-        val reducedLinesDataset = datasets(s"${dsName}_Lines_${interval}min_delayed_train")
-          .sample(withReplacement = false, fraction = 0.1)
-          .select(labelCol, featureCols_2: _*)
-
-        val metricsLines = RandomForest.randomForest(reducedLinesDataset, labelCol, featureCols_2, Array(50), Array(5), 5)
-        saveMetricsAsCSV(spark, metricsLines, s"$outputCsv/metrics_${dsName}_Lines.csv")
-      }
+      val metricsLines = RandomForest.randomForest(reducedLinesDataset, labelCol, featureCols, 20, 5, 5)
+      saveMetricsAsCSV(spark, metricsLines, s"$outputCsv/metrics_${dsName}_Lines.csv")
     }
 
-    val endRandomForestTime = System.nanoTime()
-    val durationRandomForestTime = (endRandomForestTime - startRandomForestTime) / 1e9d
-    executionTimes += (("RandomForest", durationRandomForestTime))
+    val endMLTime = System.nanoTime()
+    val durationMLTime = (endMLTime - startMLTime) / 1e9d
+    executionTimes += (("RandomForest", durationMLTime))
   }
 }

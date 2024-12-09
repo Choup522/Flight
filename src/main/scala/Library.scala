@@ -1,4 +1,3 @@
-import org.apache.spark.SparkContext
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{DoubleType, FloatType, LongType, StringType, StructField, StructType}
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
@@ -73,22 +72,6 @@ object Library {
     val missing_values_with_percentage = missing_values_df.withColumn("Pct_missing_values", col("Missing_values") / totalRows * 100)
 
     missing_values_with_percentage
-  }
-
-  // Function to collect the information on the cluster and partitions
-  def getClusterInfo(sc: SparkContext): Int = {
-
-    // Collect information on the cluster
-    val executorInfo = sc.statusTracker.getExecutorInfos
-
-    // Calculate the total number of cores using the information from the executors
-    val totalCores = executorInfo.map(info => info.numRunningTasks).sum
-
-    // Calculate the theoretical partitions based on the number of cores and the size of the data
-    val partitionsBasedOnCores: Int = math.max(totalCores * 3, 1)
-
-    // Return the information
-    partitionsBasedOnCores
   }
 
   // Function to export the schema of a DataFrame

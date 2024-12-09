@@ -27,6 +27,10 @@
   },
   "execution": {
     "reload_and_train": "All",
-    "environment": "local"
+    "environment": "local",
+    "generation_mode": "cols",
+    "sample": true,
+    "fraction": 0.001,
+    "reload_parquet": false
   }
 }

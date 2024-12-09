@@ -4,7 +4,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.{DoubleType, IntegerType, StringType}
 import org.apache.spark.ml.feature.Imputer
 import Library._
-import org.apache.log4j.Logger
 import LoggerFactory.logger
 
 case object Restatement {
@@ -182,14 +181,14 @@ case object Restatement {
   }
 
   // Function to generate a dataset for the classification of flights
-  def DF_GenerateFlightDataset(spark: SparkSession, in_DF: DataFrame, in_DS_Type: String, in_DelayedThreshold: Double, in_OnTimeThreshold: Double = 0.0, fraction: Double): (DataFrame, DataFrame, DataFrame, DataFrame) = {
+  def DF_GenerateFlightDataset(spark: SparkSession, in_DF: DataFrame, in_DS_Type: String, in_DelayedThreshold: Double, in_OnTimeThreshold: Double = 0.0): (DataFrame, DataFrame, DataFrame, DataFrame) = {
 
     // check that the delay threshold is greater than the on-time threshold
     require(in_DelayedThreshold >= in_OnTimeThreshold,
       s"DF_GenerateDataset: threshold $in_DelayedThreshold must be higher than threshold $in_OnTimeThreshold for on-time flights!")
 
     // Application of the sampling rate
-    val sampled_DF = in_DF.sample(withReplacement = false, fraction)
+    val sampled_DF = in_DF //.sample(withReplacement = false, fraction)
     if (sampled_DF.isEmpty) {
       logger.warn("DF_GenerateFlightDataset: DataFrame is empty after sampling")
       return (spark.emptyDataFrame, spark.emptyDataFrame, spark.emptyDataFrame, spark.emptyDataFrame)
@@ -212,23 +211,33 @@ case object Restatement {
     // Create a dataset of on-time flights
     val out_OnTime = sampled_DF.where(col("FT_ARR_DELAY_NEW") <= in_OnTimeThreshold)
 
+    require(out_delayed.count() > 0, "No delayed flights found.")
+    require(out_OnTime.count() > 0, "No on-time flights found.")
+
     // Add an 'OnTime' column (False for delayed flights, True for on-time flights)
     val out_delayed_with_OnTime = out_delayed.withColumn("FT_OnTime", lit(0)) // 0 for false
     val out_OnTime_with_OnTime = out_OnTime.withColumn("FT_OnTime", lit(1)) // 1 for true
 
     //  Counting delayed flights
     val out_delayed_count = out_delayed_with_OnTime.count()
+    val out_OnTime_count = out_OnTime_with_OnTime.count()
 
-    // Random division of delayed flights into 75% training and 25% test flights
-    val Array(out_delayed_train, out_delayed_test) = out_delayed_with_OnTime.randomSplit(Array(0.75, 0.25), seed = 100)
+    // Sampling of on-time flights to match delayed flights
+    val out_OnTime_sampled = if (out_OnTime_count <= out_delayed_count) {
+      out_OnTime_with_OnTime
+    } else {
+      out_OnTime_with_OnTime.sample(withReplacement = false, fraction = 1.0).limit(out_delayed_count.toInt)
+    }
 
-    // Sampling on-time flights to match the number of delayed flights
-    val out_OnTime_sampled = out_OnTime_with_OnTime.sample(withReplacement = false, fraction = 1.0).limit(out_delayed_count.toInt)
+    // Dynamically creating fractions to avoid empty datasets
+    val delayedSplit = if (out_delayed_count > 1) Array(0.75, 0.25) else Array(1.0, 0.0)
+    val onTimeSplit = if (out_OnTime_sampled.count() > 1) Array(0.75, 0.25) else Array(1.0, 0.0)
 
-    // Random division of hourly flights into 75% training and 25% testing
-    val Array(out_OnTime_train, out_OnTime_test) = out_OnTime_sampled.randomSplit(Array(0.75, 0.25), seed = 100)
+    // Dynamic partitioning
+    val Array(out_delayed_train, out_delayed_test) = out_delayed_with_OnTime.randomSplit(delayedSplit, seed = 100)
+    val Array(out_OnTime_train, out_OnTime_test) = out_OnTime_sampled.randomSplit(onTimeSplit, seed = 100)
 
-    // Return training and test datasets for delayed and on-time flights
+    // Display train and test datasets for delayed and on-time flights
     (out_delayed_train, out_delayed_test, out_OnTime_train, out_OnTime_test)
   }
 

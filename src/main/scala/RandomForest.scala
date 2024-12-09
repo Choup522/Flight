@@ -3,10 +3,31 @@ import org.apache.spark.ml.Pipeline
 import org.apache.spark.ml.classification.{RandomForestClassificationModel, RandomForestClassifier}
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
 import org.apache.spark.ml.feature.{StringIndexer, VectorAssembler}
-import org.apache.spark.ml.tuning.{CrossValidator, ParamGridBuilder}
-import org.apache.spark.sql.functions.unix_timestamp
+import org.apache.spark.sql.functions.{col, unix_timestamp}
+import LoggerFactory.logger
+
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.{Await, Future}
+import scala.concurrent.duration._
 
 case object RandomForest {
+
+  def indexStringColumns2(df: DataFrame, columns: Array[String]): DataFrame = {
+
+    val futures = columns.map { colName =>
+      Future {
+        val indexer = new StringIndexer()
+          .setInputCol(colName)
+          .setOutputCol(s"${colName}_indexed")
+          .setHandleInvalid("skip")
+
+        indexer.fit(df).transform(df).drop(colName).withColumnRenamed(s"${colName}_indexed", colName)
+      }
+    }
+
+    val indexedDfs = Await.result(Future.sequence(futures.toSeq), 10.minutes)
+    indexedDfs.reduce(_ union _)
+  }
 
   // Conversion of columns to numerical values for string columns
   private def indexStringColumns(df: DataFrame, columns: Array[String]): DataFrame = {
@@ -35,96 +56,122 @@ case object RandomForest {
     tempDf
   }
 
-  // Indexing labels
-  private def labelIndexer(df: DataFrame, inputCol: String, outputCol: String): StringIndexer = {
-    new StringIndexer()
-      .setInputCol(inputCol)
-      .setOutputCol(outputCol)
-      .setHandleInvalid("skip")
-  }
-
-  // Feature assembler
-  private def featureAssembler(inputCols: Array[String], outputCol: String): VectorAssembler = {
-    new VectorAssembler()
-      .setInputCols(inputCols)
-      .setOutputCol(outputCol)
-  }
-
-  // Random Forest model
-  private def randomForestClassifier(labelCol: String, featuresCol: String): RandomForestClassifier = {
-    new RandomForestClassifier()
-      .setLabelCol(labelCol)
-      .setFeaturesCol(featuresCol)
-  }
-
   // Execution of the model
-  def randomForest(df: DataFrame, labelCol: String, featureCols: Array[String], numberOfTrees: Array[Int], deepth: Array[Int], folds: Int): Map[String, Double]  = {
+  def randomForest(df: DataFrame, labelCol: String, featureCols: Array[String], numberOfTrees: Int, depth: Int, folds: Int): Map[String, Double]  = {
 
-    // Identify String and Timestamp/Date columns in the DataFrame
-    val stringCols = df.dtypes.filter(_._2 == "StringType").map(_._1)
-    // identify columns of type Timestamp or Date
-    val timestampCols = df.dtypes.filter {
-      case (_, dataType) => dataType == "TimestampType" || dataType == "DateType" }.map(_._1)
+    try {
 
-    // Process transformations on String and Timestamp columns
-    var processedDF = indexStringColumns(df, stringCols)
-    processedDF = convertDateColumns(processedDF, timestampCols)
+      logger.info("Verifying the values of inputs")
 
-    // Indexing steps
-    val labelIndexerModel = labelIndexer(processedDF, labelCol, "indexedLabel")
-    val assembler = featureAssembler(featureCols, "indexedFeatures")
+      // Validate inputs
+      require(df != null && !df.isEmpty, "Input DataFrame is null or empty.")
+      require(labelCol.nonEmpty, "Label column name cannot be empty.")
+      require(featureCols.nonEmpty, "Feature columns cannot be empty.")
+      require(numberOfTrees > 0, "Number of trees must be a positive integer.")
+      require(depth > 0, "Maximum depth must be a positive integer.")
+      require(folds > 1, "Number of folds for cross-validation must be greater than 1.")
 
-    // Random Forest classifier
-    val randomForest = randomForestClassifier("indexedLabel", "indexedFeatures")
+      // Validate label column values
+      val uniqueLabels = df.select(labelCol).distinct().collect().map(_.get(0))
+      require(
+        uniqueLabels.forall(label => label.isInstanceOf[Number] && label.asInstanceOf[Number].doubleValue >= 0),
+        s"All labels in column $labelCol must be non-negative numbers. Found: ${uniqueLabels.mkString(", ")}"
+      )
 
-    // Pipeline creation
-    val pipeline = new Pipeline()
-      .setStages(Array(labelIndexerModel, assembler, randomForest))
+      // Identify String and Timestamp/Date columns in the DataFrame
+      val stringCols = df.dtypes.filter(_._2 == "StringType").map(_._1)
 
-    // Param grid for Grid Search
-    val paramGrid = new ParamGridBuilder()
-      .addGrid(randomForest.numTrees, numberOfTrees) // Testing different numbers of trees Array(50, 100, 150))
-      .addGrid(randomForest.maxDepth, deepth)    // Testing different depths Array(5, 10, 15))
-      .build()
+      // identify columns of type Timestamp or Date
+      val timestampCols = df.dtypes.filter { case (_, dataType) => dataType == "TimestampType" || dataType == "DateType" }.map(_._1)
 
-    // Cross-validator creation
-    val crossValidator = new CrossValidator()
-      .setEstimator(pipeline)
-      .setEvaluator(new MulticlassClassificationEvaluator()
+      // Process transformations on String and Timestamp columns
+      logger.info("Process transformation")
+      var processedDF = indexStringColumns2(df, stringCols)
+      processedDF = processedDF.withColumn(labelCol, col(labelCol).cast("int"))
+      processedDF = convertDateColumns(processedDF, timestampCols)
+
+      // Ensure all classes are present in the dataset
+      val allClasses = processedDF.select(labelCol).distinct().collect().map(_.getInt(0)).toSet
+      require(
+        allClasses.nonEmpty,
+        s"Dataset must contain at least one class in the label column. Found: ${allClasses.mkString(", ")}"
+      )
+
+      logger.info("Preparing the pipeline")
+
+      // Indexing steps
+      val labelIndexerModel = new StringIndexer()
+        .setInputCol(labelCol)
+        .setOutputCol("indexedLabel")
+        .fit(processedDF)
+
+      val assembler = new VectorAssembler()
+        .setInputCols(featureCols)
+        .setOutputCol("indexedFeatures")
+
+      // Random Forest classifier
+      val randomForest = new RandomForestClassifier()
+        .setLabelCol("indexedLabel")
+        .setFeaturesCol("indexedFeatures")
+        .setNumTrees(numberOfTrees)
+        .setMaxDepth(depth)
+
+      // Pipeline creation
+      val pipeline = new Pipeline()
+        .setStages(Array(labelIndexerModel, assembler, randomForest))
+
+      logger.info("Creating training et test set")
+
+      // Splitting data into training and test sets
+      val Array(trainingData, testData) = processedDF.randomSplit(Array(0.8, 0.2))
+
+      // Train the model
+      logger.info("Training the model")
+      val model = pipeline.fit(trainingData)
+
+      // Make predictions on the test data
+      logger.info("Prediction phase")
+      val predictions = model.transform(testData)
+
+      // Ensure no null values in prediction columns
+      require(
+        predictions.select("indexedLabel", "prediction").filter(row => row.isNullAt(0) || row.isNullAt(1)).isEmpty,
+        "Null values found in indexedLabel or prediction columns."
+      )
+
+      // Evaluate the model
+      logger.info("Evaluation of the model")
+      val evaluator = new MulticlassClassificationEvaluator()
         .setLabelCol("indexedLabel")
         .setPredictionCol("prediction")
-        .setMetricName("accuracy"))
-      .setEstimatorParamMaps(paramGrid)
-      .setNumFolds(folds)  // Cross-validation with 5 folds
 
-    // Splitting data into training and test sets
-    val Array(trainingData, testData) = processedDF.randomSplit(Array(0.8, 0.2))
+      val accuracy = evaluator.setMetricName("accuracy").evaluate(predictions)
+      val f1Score = evaluator.setMetricName("f1").evaluate(predictions)
+      val recall = evaluator.setMetricName("weightedRecall").evaluate(predictions)
+      val precision = evaluator.setMetricName("weightedPrecision").evaluate(predictions)
 
-    // Fit the model using cross-validation
-    val cvModel = crossValidator.fit(trainingData)
+      // Collect the metrics
+      logger.info("Collect the metrics")
+      val rfModel = model.stages.last.asInstanceOf[RandomForestClassificationModel]
+      val metrics = Map(
+        "accuracy" -> accuracy,
+        "f1Score" -> f1Score,
+        "recall" -> recall,
+        "precision" -> precision,
+        "numTrees" -> rfModel.getNumTrees.toDouble,
+        "maxDepth" -> rfModel.getMaxDepth.toDouble
+      )
+      metrics
 
-    // Make predictions on the test data
-    val predictions = cvModel.transform(testData)
-
-    // Evaluate the model
-    val evaluator = new MulticlassClassificationEvaluator()
-      .setLabelCol("indexedLabel")
-      .setPredictionCol("prediction")
-      .setMetricName("accuracy")
-
-    val accuracy = evaluator.evaluate(predictions)
-
-    // Collect the metrics
-    val metrics = Map(
-      "accuracy" -> accuracy,
-      "numTrees" -> cvModel.bestModel.asInstanceOf[org.apache.spark.ml.PipelineModel]
-        .stages.last.asInstanceOf[RandomForestClassificationModel].getNumTrees.toDouble
-    )
-
-    // Return the metrics
-    metrics
+    } catch {
+      case e: Exception =>
+        logger.info("error in the pipeline")
+        println(s"An error occurred: ${e.getMessage}")
+        Map("error" -> Double.NaN)
+    }
   }
 
+  // Function to save metrics
   def saveMetricsAsCSV(spark: SparkSession, metrics: Map[String, Double], outputPath: String): Unit = {
 
     import spark.implicits._
@@ -136,6 +183,7 @@ case object RandomForest {
     metricsDF
       .coalesce(1)
       .write
+      .mode("overwrite")
       .option("header", "true")
       .csv(s"$outputPath/metrics.csv")
 
