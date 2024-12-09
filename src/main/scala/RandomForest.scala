@@ -161,6 +161,12 @@ case object RandomForest {
         "numTrees" -> rfModel.getNumTrees.toDouble,
         "maxDepth" -> rfModel.getMaxDepth.toDouble
       )
+
+      // Print the metrics
+      metrics.foreach { case (metric, value) =>
+        logger.info(s"$metric: $value")
+      }
+
       metrics
 
     } catch {
